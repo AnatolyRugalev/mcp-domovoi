@@ -1,0 +1,24 @@
+[Unit]
+Description=domovoi - minimal fleet MCP server
+Documentation=https://github.com/AnatolyRugalev/mcp-domovoi
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# The unix user is the real privilege boundary: every file operation and
+# shell command runs as this user. Default to a dedicated non-root user
+# (create with: useradd -r -m -s /usr/bin/nologin domovoi). Some machines may
+# deliberately run it as root to give agents full control of the host --
+# that's a per-machine decision; just change User= here.
+User=domovoi
+EnvironmentFile=/etc/domovoi/domovoi.env
+ExecStart=/usr/local/bin/domovoi
+Restart=on-failure
+RestartSec=2
+
+# Note: do NOT add NoNewPrivileges/ProtectSystem-style hardening here unless
+# you also want run_command constrained by it -- constraining the service
+# constrains the commands agents run through it.
+
+[Install]
+WantedBy=multi-user.target
