@@ -1,0 +1,17 @@
+[Unit]
+Description=domovoi - minimal fleet MCP server (user service)
+Documentation=https://github.com/AnatolyRugalev/mcp-domovoi
+
+[Service]
+# Runs as the user who owns this unit -- no User= directive. That user is the
+# real privilege boundary: every file operation and shell command runs as
+# them. If the user has passwordless sudo, run_command can escalate to root on
+# demand; that is the intended way to give agents root, rather than running
+# this service as root.
+EnvironmentFile=%h/.config/domovoi/domovoi.env
+ExecStart=%h/.local/bin/domovoi
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
