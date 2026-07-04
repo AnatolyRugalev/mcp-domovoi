@@ -1,0 +1,47 @@
+version: 2
+
+project_name: domovoi
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    files:
+      - domovoi.service
+      - domovoi.env.example
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs'
+      - '^test'
+      - '^ci'
+
+release:
+  footer: |
+    ## Install or update
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/AnatolyRugalev/mcp-domovoi/main/install.sh | sudo sh
+    ```

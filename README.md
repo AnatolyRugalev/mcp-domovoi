@@ -50,6 +50,23 @@ Flags, each with a `DOMOVOI_*` environment fallback:
 
 ## Install on a new machine
 
+One-liner (installs or updates; requires root):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/AnatolyRugalev/mcp-domovoi/main/install.sh | sudo sh
+```
+
+On first run it downloads the latest release for your architecture (checksum
+verified), installs `/usr/local/bin/domovoi`, creates the `domovoi` service
+user, writes `/etc/domovoi/domovoi.env` with a **generated token** (printed
+once at the end), installs the systemd unit, and starts the service. On later
+runs it just replaces the binary and restarts — config is never touched.
+
+Overrides: `sudo DOMOVOI_VERSION=v0.2.0 sh` pins a version,
+`sudo DOMOVOI_USER=root sh` picks the service user for a first install.
+
+### Manual install
+
 1. Build (or grab `dist/` binaries from a release):
 
    ```sh
@@ -121,6 +138,20 @@ npx @modelcontextprotocol/inspector \
   --server-url http://127.0.0.1:8811/mcp \
   --header "Authorization: Bearer dev-token"
 ```
+
+### Releasing
+
+Releases are semver tags built by [goreleaser](https://goreleaser.com) in CI:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The `release` workflow runs the tests, cross-compiles static binaries for
+linux/amd64 and linux/arm64, and publishes tarballs (binary + systemd unit +
+env example) with a `checksums.txt` that `install.sh` verifies against.
+The `ci` workflow (push/PR to main) runs vet, tests, a static-build check,
+`goreleaser check`, and shellcheck on `install.sh`.
 
 Built on the official [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)
 (pinned to v1.5.0, spec 2025-11-25). No other dependencies.
