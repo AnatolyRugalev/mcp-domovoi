@@ -30,6 +30,7 @@ type config struct {
 	listen      string
 	token       string
 	path        string
+	name        string
 	allowedDirs []string
 }
 
@@ -46,6 +47,7 @@ func parseConfig(args []string) (*config, error) {
 	listen := fs.String("listen", envDefault("LISTEN", "0.0.0.0:8811"), "address to listen on (env DOMOVOI_LISTEN)")
 	token := fs.String("token", envDefault("TOKEN", ""), "bearer token required on every MCP request (env DOMOVOI_TOKEN)")
 	path := fs.String("path", envDefault("PATH", "/mcp"), "URL path of the MCP endpoint (env DOMOVOI_PATH)")
+	name := fs.String("name", envDefault("NAME", ""), "human name for this host, shown to the agent so it knows which remote machine it is operating on (env DOMOVOI_NAME; defaults to the system hostname)")
 	allowed := fs.String("allowed-dirs", envDefault("ALLOWED_DIRS", "/"), "colon-separated path prefixes the file tools may touch (env DOMOVOI_ALLOWED_DIRS)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -60,7 +62,21 @@ func parseConfig(args []string) (*config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &config{listen: *listen, token: *token, path: *path, allowedDirs: dirs}, nil
+	return &config{listen: *listen, token: *token, path: *path, name: hostName(*name), allowedDirs: dirs}, nil
+}
+
+// hostName returns the configured name, or the system hostname, or "this host"
+// as a last resort. It anchors every tool description and the server
+// instructions so the agent treats domovoi as a specific remote machine rather
+// than its own local environment.
+func hostName(configured string) string {
+	if configured != "" {
+		return configured
+	}
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "this host"
 }
 
 // resolveAllowedDirs parses a colon-separated list of absolute path prefixes,
@@ -89,6 +105,10 @@ func resolveAllowedDirs(spec string) ([]string, error) {
 
 // domovoi holds server-wide state shared by the tool handlers.
 type domovoi struct {
+	// name identifies the remote machine this instance controls; it is woven
+	// into the server instructions and tool descriptions so a connected agent
+	// understands it is acting on that host, not on its own local environment.
+	name        string
 	allowedDirs []string
 	log         *slog.Logger
 	// elevated is true in the root worker subprocess (see elevate.go). When
@@ -120,30 +140,45 @@ func (d *domovoi) logCall(tool, detail string, start time.Time, err error) {
 }
 
 func newMCPServer(d *domovoi) *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "domovoi", Version: version}, nil)
+	host := d.name
+	opts := &mcp.ServerOptions{
+		Instructions: fmt.Sprintf("These tools operate on the remote machine %q over the network — "+
+			"its filesystem, its processes, its shell. This is NOT your own local environment or the "+
+			"host you are running on: read_file, write_file, edit_file and run_command all act on %q, "+
+			"and every path and command is resolved there, never locally. Use run_command for anything "+
+			"the file tools do not cover (listing directories, moving files, installing packages, "+
+			"managing services). Set the sudo option on any tool to act as root on %q.", host, host, host),
+	}
+	server := mcp.NewServer(&mcp.Implementation{
+		Name:    "domovoi",
+		Title:   fmt.Sprintf("domovoi on %s", host),
+		Version: version,
+	}, opts)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "read_file",
-		Description: "Read a file from the local filesystem. Returns content with cat -n style " +
-			"line numbers (line number, tab, line text). Use offset and limit to page through large files. " +
-			"Set sudo to read files only root can access.",
+		Description: fmt.Sprintf("Read a file from the filesystem of the remote host %q (not your local "+
+			"machine). Returns content with cat -n style line numbers (line number, tab, line text). "+
+			"Use offset and limit to page through large files. Set sudo to read files only root can access.", host),
 	}, d.readFile)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "write_file",
-		Description: "Write content to a file, creating parent directories as needed and " +
-			"overwriting any existing file. Returns the number of bytes written. Set sudo to write as root.",
+		Description: fmt.Sprintf("Write content to a file on the remote host %q (not your local machine), "+
+			"creating parent directories as needed and overwriting any existing file. Returns the number "+
+			"of bytes written. Set sudo to write as root.", host),
 	}, d.writeFile)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "edit_file",
-		Description: "Replace an exact string in a file. old_string must match exactly (including " +
-			"whitespace) and must be unique in the file unless replace_all is true. Returns the number " +
-			"of replacements and a diff snippet of the changed region. Set sudo to edit files owned by root.",
+		Description: fmt.Sprintf("Replace an exact string in a file on the remote host %q (not your local "+
+			"machine). old_string must match exactly (including whitespace) and must be unique in the file "+
+			"unless replace_all is true. Returns the number of replacements and a diff snippet of the "+
+			"changed region. Set sudo to edit files owned by root.", host),
 	}, d.editFile)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_command",
-		Description: "Run a shell command on this machine (bash -lc, or sh -c if bash is absent). " +
-			"Returns stdout, stderr, exit_code, duration_ms and timed_out. A non-zero exit code is a " +
-			"normal result, not an error. Output is truncated to the last 100KB per stream. " +
-			"Set sudo to run the command as root.",
+		Description: fmt.Sprintf("Run a shell command on the remote host %q (not your local machine; "+
+			"bash -lc, or sh -c if bash is absent). Returns stdout, stderr, exit_code, duration_ms and "+
+			"timed_out. A non-zero exit code is a normal result, not an error. Output is truncated to the "+
+			"last 100KB per stream. Set sudo to run the command as root.", host),
 	}, d.runCommand)
 	return server
 }
@@ -171,7 +206,7 @@ func requireAuth(token string, next http.Handler) http.Handler {
 // newHandler builds the complete HTTP handler: /healthz plus the
 // token-protected MCP endpoint at cfg.path.
 func newHandler(cfg *config, logger *slog.Logger) http.Handler {
-	d := &domovoi{allowedDirs: cfg.allowedDirs, log: logger}
+	d := &domovoi{name: cfg.name, allowedDirs: cfg.allowedDirs, log: logger}
 	server := newMCPServer(d)
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
 
@@ -213,6 +248,7 @@ func main() {
 	go func() { errc <- srv.ListenAndServe() }()
 	logger.Info("domovoi listening",
 		"version", version,
+		"name", cfg.name,
 		"addr", cfg.listen,
 		"path", cfg.path,
 		"allowed_dirs", strings.Join(cfg.allowedDirs, ":"),

@@ -27,6 +27,7 @@ func (d *domovoi) callAsRoot(ctx context.Context, tool string, args any) (*mcp.C
 	}
 
 	cmd := exec.CommandContext(ctx, "sudo", "-n", exe, "worker",
+		"--name", d.name,
 		"--allowed-dirs", strings.Join(d.allowedDirs, ":"))
 	// Capture the worker/sudo stderr so a failure (e.g. sudo needs a password)
 	// produces a useful message rather than an opaque transport error.
@@ -75,6 +76,7 @@ func remarshal(from, to any) error {
 // It is reached only via `domovoi worker`, which callAsRoot invokes under sudo.
 func runWorker(args []string) error {
 	fs := flag.NewFlagSet("domovoi worker", flag.ContinueOnError)
+	name := fs.String("name", "", "human name for this host (mirrors the parent's --name)")
 	allowed := fs.String("allowed-dirs", "/", "colon-separated path prefixes the file tools may touch")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -86,6 +88,6 @@ func runWorker(args []string) error {
 	// stdout is the MCP transport here, so logs must go to stderr (the parent
 	// captures it and surfaces it only on failure).
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	d := &domovoi{allowedDirs: dirs, log: logger, elevated: true}
+	d := &domovoi{name: hostName(*name), allowedDirs: dirs, log: logger, elevated: true}
 	return newMCPServer(d).Run(context.Background(), &mcp.StdioTransport{})
 }

@@ -28,6 +28,7 @@ func TestIntegrationHTTP(t *testing.T) {
 		listen:      "unused",
 		token:       "test-token",
 		path:        "/mcp",
+		name:        "test-host",
 		allowedDirs: []string{"/"},
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -94,6 +95,26 @@ func TestIntegrationHTTP(t *testing.T) {
 		want := []string{"edit_file", "read_file", "run_command", "write_file"}
 		if strings.Join(names, ",") != strings.Join(want, ",") {
 			t.Fatalf("tools = %v, want %v", names, want)
+		}
+	})
+
+	t.Run("tool descriptions name the remote host", func(t *testing.T) {
+		// Every tool description must anchor the agent to this specific machine
+		// rather than its own local environment.
+		res, err := session.ListTools(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tool := range res.Tools {
+			if !strings.Contains(tool.Description, "test-host") {
+				t.Errorf("%s description does not mention the host name: %q", tool.Name, tool.Description)
+			}
+			if !strings.Contains(tool.Description, "not your local machine") {
+				t.Errorf("%s description does not disclaim local execution: %q", tool.Name, tool.Description)
+			}
+		}
+		if instr := session.InitializeResult().Instructions; !strings.Contains(instr, "test-host") {
+			t.Errorf("server instructions do not mention the host name: %q", instr)
 		}
 	})
 

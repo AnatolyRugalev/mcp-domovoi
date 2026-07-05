@@ -65,9 +65,21 @@ writes uses the env-var form):
 | `--token` | `DOMOVOI_TOKEN` | *(required)* | Bearer token; the server refuses to start without one. |
 | `--listen` | `DOMOVOI_LISTEN` | `0.0.0.0:8811` | Listen address. |
 | `--path` | `DOMOVOI_PATH` | `/mcp` | URL path of the MCP endpoint. Set to something like `/mcp-<random>` as a secret-path fallback for clients that cannot send headers. |
+| `--name` | `DOMOVOI_NAME` | *(system hostname)* | Human name for this machine. It is woven into the server instructions and every tool description so the agent knows it is operating on **this remote host**, not its own local environment (see [Machine identity](#machine-identity)). |
 | `--allowed-dirs` | `DOMOVOI_ALLOWED_DIRS` | `/` | Colon-separated absolute path prefixes the **file tools** may touch, enforced after symlink resolution so `..` and symlink tricks cannot escape. |
 
 `GET /healthz` responds `200` with the version and requires no auth.
+
+### Machine identity
+
+An agent talking to domovoi through a gateway can easily assume the filesystem
+and shell it sees are its *own* local machine, and start editing the wrong host.
+To prevent that, domovoi advertises the machine's name (from `--name`, defaulting
+to the hostname) in two places every MCP client surfaces to the model: the
+server-level `instructions` and each tool's description ("Read a file from the
+remote host `yaga` (not your local machine)…"). Give each instance a
+recognisable `--name` and the agent will address them as the distinct remote
+machines they are.
 
 ## Security model
 
