@@ -71,11 +71,23 @@ type readFileInput struct {
 	Path   string `json:"path" jsonschema:"absolute path of the file to read"`
 	Offset int    `json:"offset,omitempty" jsonschema:"1-based line number to start reading from (default 1)"`
 	Limit  int    `json:"limit,omitempty" jsonschema:"maximum number of lines to read (default 2000)"`
+	Sudo   bool   `json:"sudo,omitempty" jsonschema:"read the file as root via sudo (default false)"`
 }
 
 func (d *domovoi) readFile(ctx context.Context, req *mcp.CallToolRequest, in readFileInput) (res *mcp.CallToolResult, _ any, err error) {
 	start := time.Now()
-	defer func() { d.logCall("read_file", in.Path, start, err) }()
+	defer func() { d.logCall("read_file", callDetail(in.Path, in.Sudo), start, err) }()
+
+	if in.Sudo && !d.elevated {
+		res, cerr := d.callAsRoot(ctx, "read_file", in)
+		if cerr != nil {
+			return nil, nil, cerr
+		}
+		if res.IsError {
+			return nil, nil, errorFromResult(res)
+		}
+		return res, nil, nil
+	}
 
 	path, err := d.resolvePath(in.Path)
 	if err != nil {
@@ -149,11 +161,23 @@ func (d *domovoi) readFile(ctx context.Context, req *mcp.CallToolRequest, in rea
 type writeFileInput struct {
 	Path    string `json:"path" jsonschema:"absolute path of the file to write"`
 	Content string `json:"content" jsonschema:"full content to write to the file"`
+	Sudo    bool   `json:"sudo,omitempty" jsonschema:"write the file as root via sudo (default false)"`
 }
 
 func (d *domovoi) writeFile(ctx context.Context, req *mcp.CallToolRequest, in writeFileInput) (res *mcp.CallToolResult, _ any, err error) {
 	start := time.Now()
-	defer func() { d.logCall("write_file", in.Path, start, err) }()
+	defer func() { d.logCall("write_file", callDetail(in.Path, in.Sudo), start, err) }()
+
+	if in.Sudo && !d.elevated {
+		res, cerr := d.callAsRoot(ctx, "write_file", in)
+		if cerr != nil {
+			return nil, nil, cerr
+		}
+		if res.IsError {
+			return nil, nil, errorFromResult(res)
+		}
+		return res, nil, nil
+	}
 
 	path, err := d.resolvePath(in.Path)
 	if err != nil {
@@ -176,11 +200,23 @@ type editFileInput struct {
 	OldString  string `json:"old_string" jsonschema:"exact text to replace (must match including whitespace)"`
 	NewString  string `json:"new_string" jsonschema:"text to replace it with"`
 	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"replace every occurrence instead of requiring a unique match (default false)"`
+	Sudo       bool   `json:"sudo,omitempty" jsonschema:"edit the file as root via sudo (default false)"`
 }
 
 func (d *domovoi) editFile(ctx context.Context, req *mcp.CallToolRequest, in editFileInput) (res *mcp.CallToolResult, _ any, err error) {
 	start := time.Now()
-	defer func() { d.logCall("edit_file", in.Path, start, err) }()
+	defer func() { d.logCall("edit_file", callDetail(in.Path, in.Sudo), start, err) }()
+
+	if in.Sudo && !d.elevated {
+		res, cerr := d.callAsRoot(ctx, "edit_file", in)
+		if cerr != nil {
+			return nil, nil, cerr
+		}
+		if res.IsError {
+			return nil, nil, errorFromResult(res)
+		}
+		return res, nil, nil
+	}
 
 	if in.OldString == in.NewString {
 		return nil, nil, errors.New("old_string and new_string are identical")

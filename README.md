@@ -19,8 +19,11 @@ trusted network and terminate TLS at a reverse proxy or gateway).
 | `edit_file` | Exact-string replacement: `old_string` must be unique unless `replace_all` is set. Returns the replacement count and a unified-diff snippet. |
 | `run_command` | Run a shell command via `bash -lc` (or `sh -c`). Structured result: `stdout`, `stderr`, `exit_code`, `duration_ms`, `timed_out`. Timeout defaults to 60 s (max 600 s); on timeout the whole process group is killed. Output keeps the last 100 KB per stream. A non-zero exit code is a normal result, not an error. |
 
-The tool semantics follow the conventions of common agent file/shell tools, so
-agents generally know how to use them without special instructions.
+Every tool also takes an optional `sudo` boolean. When set, domovoi re-executes
+itself under `sudo` and performs that one operation as root (see
+[Elevation with sudo](#elevation-with-sudo)). The tool semantics otherwise follow
+the conventions of common agent file/shell tools, so agents generally know how to
+use them without special instructions.
 
 ## Install
 
@@ -79,8 +82,26 @@ Be deliberate about this — domovoi hands an agent real control of the host.
   trust the agent: a normal user for a scoped blast radius, or grant it
   passwordless `sudo` (or run the service as root) if the agent is meant to
   administer the machine.
+- **Elevation is all-or-nothing.** If the service user has passwordless `sudo`,
+  the `sudo` flag lets the agent act as root — there is no per-path or per-command
+  narrowing beyond what your `sudoers` policy allows. Grant it only when the agent
+  is meant to administer the machine.
 - **Token handling.** The installer generates a random token and stores it
   `chmod 600`. Treat it like an SSH key.
+
+### Elevation with sudo
+
+Passing `sudo: true` to any tool makes domovoi re-execute *itself*
+(`sudo -n domovoi worker ...`) and proxy that single tool call to the elevated
+copy over stdio. The root worker runs the exact same Go code — line numbering,
+UTF-8 checks, diff snippets, and the `--allowed-dirs` allowlist all still apply —
+so the only thing that changes is the effective user. Nothing is shelled out to
+`cat`/`tee`, and elevated calls are tagged `(sudo)` in the log.
+
+This requires **non-interactive** sudo for the service user (`sudo -n` must not
+prompt). If sudo would ask for a password, the call fails with the captured sudo
+error instead of hanging. With no sudo configured, simply never set the flag and
+domovoi behaves as an unprivileged file/shell server.
 
 ## Connecting a client
 

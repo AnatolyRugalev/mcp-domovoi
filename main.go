@@ -56,8 +56,19 @@ func parseConfig(args []string) (*config, error) {
 	if !strings.HasPrefix(*path, "/") {
 		return nil, fmt.Errorf("--path must start with /, got %q", *path)
 	}
+	dirs, err := resolveAllowedDirs(*allowed)
+	if err != nil {
+		return nil, err
+	}
+	return &config{listen: *listen, token: *token, path: *path, allowedDirs: dirs}, nil
+}
+
+// resolveAllowedDirs parses a colon-separated list of absolute path prefixes,
+// cleaning each and resolving symlinks up front so later prefix checks compare
+// like with like.
+func resolveAllowedDirs(spec string) ([]string, error) {
 	var dirs []string
-	for _, d := range strings.Split(*allowed, ":") {
+	for _, d := range strings.Split(spec, ":") {
 		if d == "" {
 			continue
 		}
@@ -65,22 +76,34 @@ func parseConfig(args []string) (*config, error) {
 			return nil, fmt.Errorf("allowed dir %q is not absolute", d)
 		}
 		clean := filepath.Clean(d)
-		// Resolve symlinks now so the prefix check compares like with like.
 		if resolved, err := filepath.EvalSymlinks(clean); err == nil {
 			clean = resolved
 		}
 		dirs = append(dirs, clean)
 	}
 	if len(dirs) == 0 {
-		return nil, errors.New("--allowed-dirs must contain at least one directory")
+		return nil, errors.New("allowed-dirs must contain at least one directory")
 	}
-	return &config{listen: *listen, token: *token, path: *path, allowedDirs: dirs}, nil
+	return dirs, nil
 }
 
 // domovoi holds server-wide state shared by the tool handlers.
 type domovoi struct {
 	allowedDirs []string
 	log         *slog.Logger
+	// elevated is true in the root worker subprocess (see elevate.go). When
+	// set, the tools perform their operations directly instead of re-executing
+	// under sudo, which is what makes the sudo option run as root.
+	elevated bool
+}
+
+// callDetail annotates a log detail string with a sudo marker so elevated
+// calls are distinguishable in the logs.
+func callDetail(detail string, sudo bool) string {
+	if sudo {
+		return detail + " (sudo)"
+	}
+	return detail
 }
 
 func (d *domovoi) logCall(tool, detail string, start time.Time, err error) {
@@ -101,24 +124,26 @@ func newMCPServer(d *domovoi) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "read_file",
 		Description: "Read a file from the local filesystem. Returns content with cat -n style " +
-			"line numbers (line number, tab, line text). Use offset and limit to page through large files.",
+			"line numbers (line number, tab, line text). Use offset and limit to page through large files. " +
+			"Set sudo to read files only root can access.",
 	}, d.readFile)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "write_file",
 		Description: "Write content to a file, creating parent directories as needed and " +
-			"overwriting any existing file. Returns the number of bytes written.",
+			"overwriting any existing file. Returns the number of bytes written. Set sudo to write as root.",
 	}, d.writeFile)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "edit_file",
 		Description: "Replace an exact string in a file. old_string must match exactly (including " +
 			"whitespace) and must be unique in the file unless replace_all is true. Returns the number " +
-			"of replacements and a diff snippet of the changed region.",
+			"of replacements and a diff snippet of the changed region. Set sudo to edit files owned by root.",
 	}, d.editFile)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_command",
 		Description: "Run a shell command on this machine (bash -lc, or sh -c if bash is absent). " +
 			"Returns stdout, stderr, exit_code, duration_ms and timed_out. A non-zero exit code is a " +
-			"normal result, not an error. Output is truncated to the last 100KB per stream.",
+			"normal result, not an error. Output is truncated to the last 100KB per stream. " +
+			"Set sudo to run the command as root.",
 	}, d.runCommand)
 	return server
 }
@@ -159,6 +184,16 @@ func newHandler(cfg *config, logger *slog.Logger) http.Handler {
 }
 
 func main() {
+	// "worker" is the privileged self-re-exec: domovoi runs itself under sudo
+	// in this mode to serve one MCP session over stdio as root (see elevate.go).
+	if len(os.Args) > 1 && os.Args[1] == "worker" {
+		if err := runWorker(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "domovoi worker:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	cfg, err := parseConfig(os.Args[1:])
 	if err != nil {

@@ -22,6 +22,7 @@ type runCommandInput struct {
 	Command        string `json:"command" jsonschema:"shell command to run (bash -lc, or sh -c if bash is absent)"`
 	Workdir        string `json:"workdir,omitempty" jsonschema:"working directory (default: the server's home directory, or /)"`
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"kill the command after this many seconds (default 60, max 600)"`
+	Sudo           bool   `json:"sudo,omitempty" jsonschema:"run the command as root via sudo (default false)"`
 }
 
 type runCommandOutput struct {
@@ -34,7 +35,21 @@ type runCommandOutput struct {
 
 func (d *domovoi) runCommand(ctx context.Context, req *mcp.CallToolRequest, in runCommandInput) (res *mcp.CallToolResult, out runCommandOutput, err error) {
 	start := time.Now()
-	defer func() { d.logCall("run_command", in.Command, start, err) }()
+	defer func() { d.logCall("run_command", callDetail(in.Command, in.Sudo), start, err) }()
+
+	if in.Sudo && !d.elevated {
+		res, cerr := d.callAsRoot(ctx, "run_command", in)
+		if cerr != nil {
+			return nil, out, cerr
+		}
+		if res.IsError {
+			return nil, out, errorFromResult(res)
+		}
+		if err := remarshal(res.StructuredContent, &out); err != nil {
+			return nil, out, fmt.Errorf("decoding elevated run_command result: %w", err)
+		}
+		return nil, out, nil
+	}
 
 	shell, shellArg := "sh", "-c"
 	if p, lookErr := exec.LookPath("bash"); lookErr == nil {
