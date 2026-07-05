@@ -1,7 +1,7 @@
-// Command domovoi is a minimal fleet MCP server: four tools (read_file,
-// write_file, edit_file, run_command) over streamable HTTP, secured by a
-// bearer token. One instance per machine; a central MCP gateway federates
-// them as named targets.
+// Command domovoi is a minimal fleet MCP server: file and shell tools
+// (read_file, write_file, edit_file, run_command) plus server_info and
+// self_update, over streamable HTTP, secured by a bearer token. One instance
+// per machine; a central MCP gateway federates them as named targets.
 package main
 
 import (
@@ -180,6 +180,19 @@ func newMCPServer(d *domovoi) *mcp.Server {
 			"timed_out. A non-zero exit code is a normal result, not an error. Output is truncated to the "+
 			"last 100KB per stream. Set sudo to run the command as root.", host),
 	}, d.runCommand)
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "server_info",
+		Description: fmt.Sprintf("Report this domovoi server's own identity: version, host name (%q), "+
+			"OS/arch, and whether passwordless sudo is available. Use it to confirm which machine you are "+
+			"connected to and what version it runs.", host),
+	}, d.serverInfo)
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "self_update",
+		Description: fmt.Sprintf("Update the domovoi server on host %q to a newer release and restart it "+
+			"onto the new binary. Downloads the release from GitHub, verifies its checksum, and replaces "+
+			"the running binary in place. By default installs the latest release and restarts (which drops "+
+			"this connection); pass version to pin a tag or restart:false to install without restarting.", host),
+	}, d.selfUpdate)
 	return server
 }
 

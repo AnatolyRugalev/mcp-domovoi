@@ -82,7 +82,7 @@ func TestIntegrationHTTP(t *testing.T) {
 	}
 	defer session.Close()
 
-	t.Run("lists exactly four tools", func(t *testing.T) {
+	t.Run("lists the expected tools", func(t *testing.T) {
 		res, err := session.ListTools(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -92,7 +92,7 @@ func TestIntegrationHTTP(t *testing.T) {
 			names = append(names, tool.Name)
 		}
 		sort.Strings(names)
-		want := []string{"edit_file", "read_file", "run_command", "write_file"}
+		want := []string{"edit_file", "read_file", "run_command", "self_update", "server_info", "write_file"}
 		if strings.Join(names, ",") != strings.Join(want, ",") {
 			t.Fatalf("tools = %v, want %v", names, want)
 		}
@@ -105,11 +105,13 @@ func TestIntegrationHTTP(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// The file/shell tools must also explicitly disclaim local execution.
+		disclaims := map[string]bool{"read_file": true, "write_file": true, "edit_file": true, "run_command": true}
 		for _, tool := range res.Tools {
 			if !strings.Contains(tool.Description, "test-host") {
 				t.Errorf("%s description does not mention the host name: %q", tool.Name, tool.Description)
 			}
-			if !strings.Contains(tool.Description, "not your local machine") {
+			if disclaims[tool.Name] && !strings.Contains(tool.Description, "not your local machine") {
 				t.Errorf("%s description does not disclaim local execution: %q", tool.Name, tool.Description)
 			}
 		}
@@ -177,6 +179,23 @@ func TestIntegrationHTTP(t *testing.T) {
 		}
 		if sc["exit_code"].(float64) != 0 {
 			t.Errorf("exit_code = %v", sc["exit_code"])
+		}
+	})
+
+	t.Run("server_info reports version and host", func(t *testing.T) {
+		res := call(t, "server_info", map[string]any{})
+		if res.IsError {
+			t.Fatalf("server_info error: %s", text(t, res))
+		}
+		sc, ok := res.StructuredContent.(map[string]any)
+		if !ok {
+			t.Fatalf("structured content is %T", res.StructuredContent)
+		}
+		if sc["version"] != version {
+			t.Errorf("version = %v, want %q", sc["version"], version)
+		}
+		if sc["name"] != "test-host" {
+			t.Errorf("name = %v, want test-host", sc["name"])
 		}
 	})
 

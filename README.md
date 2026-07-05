@@ -1,7 +1,7 @@
 # domovoi
 
 A minimal MCP server that gives an AI agent file and shell access to a single
-Linux machine. One small static binary, four tools, streamable HTTP, bearer-token
+Linux machine. One small static binary, a handful of tools, streamable HTTP, bearer-token
 auth. Named after the Slavic house spirit that quietly keeps the household running.
 
 Run one instance per machine. Point an MCP client at it directly, or place a
@@ -18,6 +18,8 @@ trusted network and terminate TLS at a reverse proxy or gateway).
 | `write_file` | Write full file content, creating parent directories and overwriting existing files. |
 | `edit_file` | Exact-string replacement: `old_string` must be unique unless `replace_all` is set. Returns the replacement count and a unified-diff snippet. |
 | `run_command` | Run a shell command via `bash -lc` (or `sh -c`). Structured result: `stdout`, `stderr`, `exit_code`, `duration_ms`, `timed_out`. Timeout defaults to 60 s (max 600 s); on timeout the whole process group is killed. Output keeps the last 100 KB per stream. A non-zero exit code is a normal result, not an error. |
+| `server_info` | Report this instance's own identity: `version`, `name`, `os`, `arch`, `go_version`, `executable`, and whether passwordless sudo is available. Handy for confirming which machine and version an agent is talking to. |
+| `self_update` | Download a release from GitHub, verify its checksum, replace the running binary in place, and re-exec onto it. Defaults to the latest release; pass `version` to pin a tag or `restart: false` to install without restarting. See [Self-update](#self-update). |
 
 Every tool also takes an optional `sudo` boolean. When set, domovoi re-executes
 itself under `sudo` and performs that one operation as root (see
@@ -114,6 +116,25 @@ This requires **non-interactive** sudo for the service user (`sudo -n` must not
 prompt). If sudo would ask for a password, the call fails with the captured sudo
 error instead of hanging. With no sudo configured, simply never set the flag and
 domovoi behaves as an unprivileged file/shell server.
+
+## Self-update
+
+`self_update` upgrades a running instance without shelling out to the installer.
+It resolves the target release (the latest, or the `version` tag you pass),
+downloads that architecture's archive from GitHub, verifies it against the
+release `checksums.txt`, and atomically replaces the running binary. It then
+**re-executes itself** onto the new binary — the process keeps the same PID and
+environment, so a systemd unit stays `active` with no external restart, and the
+token from the `EnvironmentFile` is preserved. The one visible effect is that the
+MCP connection drops during the swap; reconnect to reach the new version. Pass
+`restart: false` to stage the new binary and defer the switch to the next
+restart.
+
+Replacing the binary needs write permission on it and its directory. The default
+**per-user install** (`~/.local/bin/domovoi`, owned by the service user) satisfies
+this. A **system install** puts the binary under `/usr/local/bin` owned by root
+while the service runs as an unprivileged `domovoi` user, so `self_update` cannot
+replace it — update those hosts by re-running the install script as root instead.
 
 ## Connecting a client
 
